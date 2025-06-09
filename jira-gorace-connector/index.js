@@ -61,83 +61,99 @@ async function enviarPuntosAGoRace(email, puntos) {
 }
 
 
-// Endpoint para recibir el webhook de Jira
 app.post('/webhook', async (req, res) => {
-  
   console.log('📩 Webhook recibido:');
   const payload = req.body;
   const issue = payload.issue;
   const changelog = payload.changelog;
+  //console.log('🔍 Changelog recibido:', JSON.stringify(changelog, null, 2));
+  const webhookEvent = payload.webhookEvent;
 
-  if (payload.webhookEvent === 'jira:issue_updated'){
-    //console.log('🧾 Payload completo:');
-    //console.log(JSON.stringify(payload, null, 2));
+  const email = "albertops4conil@gmail.com";
 
-    if (!issue || !issue.fields || !issue.fields.reporter || !changelog) {
-      console.log('⚠️ Webhook incompleto');
+  // 🗒️ Comentarios añadidos
+  if (webhookEvent === 'comment_created') {
+    console.log(`💬 Comentario añadido: +1 punto`);
+    await enviarPuntosAGoRace(email, 1);
+    return res.status(200).send('OK');
+  }
+
+  // 🔄 Cambios en el issue
+  if (webhookEvent === 'jira:issue_updated' && changelog) {
+    const cambios = changelog.items || [];
+    const cambioEstado = cambios.find(c => c.field === 'status');
+    const cambioAssignee = cambios.find(c => c.field === 'assignee');
+    const cambioLabels = cambios.find(c => c.field === 'labels');
+    const cambioDesc = cambios.find(c => c.field === 'description');
+    const cambioAttachment = cambios.find(c => c.field === 'Attachment');
+
+    if (cambioAttachment) {
+      console.log(`📎 Archivo adjuntado: +1 punto`);
+      await enviarPuntosAGoRace(email, 1);
+      return res.status(200).send('OK');
+    }
+
+    if (!issue || !issue.fields || !email) {
+      console.log('⚠️ Webhook incompleto o falta email');
       return res.status(400).send('Formato inválido');
     }
 
-    const cambios = changelog.items || [];
-    const cambioEstado = cambios.find(c => c.field === 'status');
+    const puntosBase = issue.fields.customfield_10038 ?? 1;
+    const duedateStr = issue.fields.duedate;
 
-    if (!cambioEstado) {
-      return res.status(200).send('OK (sin cambio de estado)');
-    }
+    // ✔️ Cambio a Done
+    if (cambioEstado) {
+      const from = cambioEstado.fromString?.toLowerCase();
+      const to = cambioEstado.toString?.toLowerCase();
 
-    const from = cambioEstado.fromString?.toLowerCase();
-    const to = cambioEstado.toString?.toLowerCase();
-    const reporterId = issue.fields.reporter.accountId;
-    const email = "albertops4conil@gmail.com";
-
-    if (!email) {
-      console.log('⚠️ No se pudo obtener el email');
-      return res.status(500).send('Falta email');
-    }
-
-    // ✔️ Si pasa de En Curso a Terminado
-    if ((from === 'in progress' || from === 'to do') && to === 'done') {
-      const puntos = issue.fields.customfield_10038 ?? 0;
-      const duedateStr = issue.fields.duedate;
-      let puntosFinales = puntos;
-
-      if (duedateStr) {
-        const fechaEntrega = new Date();
-        const duedate = new Date(duedateStr);
-        const msPorDia = 1000 * 60 * 60 * 24;
-        const diasRetraso = Math.floor((fechaEntrega - duedate) / msPorDia);
-
-        if (diasRetraso > 0) {
-          puntosFinales -= diasRetraso;
-          if (puntosFinales < 0) puntosFinales = 0;
-          console.log(`⏰ Entregado tarde: ${diasRetraso} días de retraso.`);
-        } else {
-          console.log('✅ Entregado en plazo');
+      if ((from === 'in progress' || from === 'to do') && to === 'done') {
+        let puntosFinales = puntosBase;
+        if (duedateStr) {
+          const now = new Date();
+          const due = new Date(duedateStr);
+          const diffDays = Math.floor((now - due) / (1000 * 60 * 60 * 24));
+          if (diffDays > 0) {
+            puntosFinales = Math.max(0, puntosFinales - diffDays);
+            console.log(`⏰ Entregado tarde (${diffDays} días). Puntos ajustados.`);
+          } else {
+            console.log('✅ Entregado en plazo.');
+          }
         }
-      } else {
-        console.log('⏳ Sin fecha límite. Se entregan puntos sin descuento.');
+        console.log(`📧 Email: ${email} | 🏁 Puntos a enviar: ${puntosFinales}`);
+        await enviarPuntosAGoRace(email, puntosFinales);
       }
 
-      console.log(`📧 Email: ${email}`);
-      console.log(`🏁 Puntos a enviar: ${puntosFinales}`);
-      await enviarPuntosAGoRace(email, puntosFinales);
+      if (to === 'in progress') {
+        console.log(`🚀 Estado cambiado a In Progress: +2 puntos`);
+        await enviarPuntosAGoRace(email, 2);
+      }
     }
 
-
-    /*
-    // Si pasa de Terminado a En Curso
-    if (from === 'done' && to === 'in progress') {
-      const penalizacion = -3;
-      console.log(`🔁 Tarea reabierta, se penaliza con ${penalizacion} puntos`);
-      console.log(`📧 Email: ${email}`);
-      await enviarPuntosAGoRace(email, penalizacion);
+    if (cambioAssignee) {
+      console.log(`👤 Asignación cambiada: +2 puntos`);
+      await enviarPuntosAGoRace(email, 2);
     }
-    */
+
+    if (cambioLabels) {
+      console.log(`🏷️ Etiquetas modificadas: +1 punto`);
+      await enviarPuntosAGoRace(email, 1);
+    }
+
+    if (cambioDesc) {
+      console.log(`📝 Descripción actualizada: +1 punto`);
+      await enviarPuntosAGoRace(email, 1);
+    }
+  }
+
+  // 🆕 Creación de issue
+  if (webhookEvent === 'jira:issue_created') {
+    console.log(`🆕 Issue creado: +1 punto`);
+    await enviarPuntosAGoRace(email, 1);
   }
 
   res.status(200).send('OK');
-
 });
+
 
 
 
