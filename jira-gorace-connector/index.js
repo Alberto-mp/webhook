@@ -63,33 +63,84 @@ async function enviarPuntosAGoRace(email, puntos) {
 
 // Endpoint para recibir el webhook de Jira
 app.post('/webhook', async (req, res) => {
+  
   console.log('📩 Webhook recibido:');
-  console.log(JSON.stringify(req.body, null, 2));
+  const payload = req.body;
+  const issue = payload.issue;
+  const changelog = payload.changelog;
 
-  const issue = req.body.issue;
+  if (payload.webhookEvent === 'jira:issue_updated'){
+    //console.log('🧾 Payload completo:');
+    //console.log(JSON.stringify(payload, null, 2));
 
-  if (!issue || !issue.fields || !issue.fields.reporter) {
-    console.log('⚠️ Webhook no tiene el formato esperado');
-    return res.status(400).send('Formato inválido');
+    if (!issue || !issue.fields || !issue.fields.reporter || !changelog) {
+      console.log('⚠️ Webhook incompleto');
+      return res.status(400).send('Formato inválido');
+    }
+
+    const cambios = changelog.items || [];
+    const cambioEstado = cambios.find(c => c.field === 'status');
+
+    if (!cambioEstado) {
+      return res.status(200).send('OK (sin cambio de estado)');
+    }
+
+    const from = cambioEstado.fromString?.toLowerCase();
+    const to = cambioEstado.toString?.toLowerCase();
+    const reporterId = issue.fields.reporter.accountId;
+    const email = "albertops4conil@gmail.com";
+
+    if (!email) {
+      console.log('⚠️ No se pudo obtener el email');
+      return res.status(500).send('Falta email');
+    }
+
+    // ✔️ Si pasa de En Curso a Terminado
+    if ((from === 'in progress' || from === 'to do') && to === 'done') {
+      const puntos = issue.fields.customfield_10038 ?? 0;
+      const duedateStr = issue.fields.duedate;
+      let puntosFinales = puntos;
+
+      if (duedateStr) {
+        const fechaEntrega = new Date();
+        const duedate = new Date(duedateStr);
+        const msPorDia = 1000 * 60 * 60 * 24;
+        const diasRetraso = Math.floor((fechaEntrega - duedate) / msPorDia);
+
+        if (diasRetraso > 0) {
+          puntosFinales -= diasRetraso;
+          if (puntosFinales < 0) puntosFinales = 0;
+          console.log(`⏰ Entregado tarde: ${diasRetraso} días de retraso.`);
+        } else {
+          console.log('✅ Entregado en plazo');
+        }
+      } else {
+        console.log('⏳ Sin fecha límite. Se entregan puntos sin descuento.');
+      }
+
+      console.log(`📧 Email: ${email}`);
+      console.log(`🏁 Puntos a enviar: ${puntosFinales}`);
+      await enviarPuntosAGoRace(email, puntosFinales);
+    }
+
+
+    /*
+    // Si pasa de Terminado a En Curso
+    if (from === 'done' && to === 'in progress') {
+      const penalizacion = -3;
+      console.log(`🔁 Tarea reabierta, se penaliza con ${penalizacion} puntos`);
+      console.log(`📧 Email: ${email}`);
+      await enviarPuntosAGoRace(email, penalizacion);
+    }
+    */
   }
-
-  const reporterId = issue.fields.reporter.accountId;
-  const puntos = issue.fields.customfield_10038;
-
-  const email = "albertops4conil@gmail.com";//await getEmailFromAccountId(reporterId);
-
-  if (!email || puntos == null) {
-    console.log('⚠️ No se pudo obtener el email o los puntos del issue.');
-    return res.status(500).send('Faltan datos');
-  }
-
-  console.log(`📧 Email del reportero: ${email}`);
-  console.log(`🏁 Puntos a enviar: ${puntos}`);
-
-  await enviarPuntosAGoRace(email, puntos);
 
   res.status(200).send('OK');
+
 });
+
+
+
 
 // Iniciar servidor
 const PORT = 3000;
