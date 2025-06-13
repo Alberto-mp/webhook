@@ -6,6 +6,24 @@ require('dotenv').config();
 
 app.use(express.json());
 
+
+// Función para formatear la fecha actual en UTC
+function getFormattedUTCDate() {
+  const now = new Date();
+
+  const pad = (num) => String(num).padStart(2, '0');
+
+  const year = now.getUTCFullYear();
+  const month = pad(now.getUTCMonth() + 1);
+  const day = pad(now.getUTCDate());
+  const hours = pad(now.getUTCHours());
+  const minutes = pad(now.getUTCMinutes());
+  const seconds = pad(now.getUTCSeconds());
+
+  // El offset será siempre +00:00 para UTC
+  return `${year}-${month}-${day}T${hours}:${minutes}:${seconds}+00:00`;
+}
+
 // Función para obtener el email del usuario usando su accountId
 async function getEmailFromAccountId(accountId) {
   try {
@@ -24,61 +42,62 @@ async function getEmailFromAccountId(accountId) {
   }
 }
 
-// Función para enviar los puntos a GoRace
-async function enviarPuntosAGoRace(email, puntos) {
+// Función genérica para enviar un valor 1 a una variable específica en GoRace
+async function enviarEventoAGoRace(email, variable) {
   try {
-    //const fechaFormateada = new Date()
-    //  .toLocaleString('sv-SE', { timeZone: 'Europe/Madrid' })
-    //  .replace('T', ' '); // "YYYY-MM-DD HH:mm:ss"
+    const fechaFormateada = getFormattedUTCDate();
 
-    const fechaFormateada = "2025-06-04T16:32:33+02:00";
+    console.log(`📤 Enviando evento "${variable}" con valor 1 para ${email} en ${fechaFormateada}`);
 
-    console.log('📅 Fecha enviada:', fechaFormateada);
-    console.log('🌍 URL destino GoRace:', process.env.GORACE_API_URL);
-
-    const response = await axios.post(
-      process.env.GORACE_API_URL,
-      [
-        {
-          assignment: process.env.GORACE_ASSIGNMENT,
-          email,
-          time: fechaFormateada,
-          [process.env.GORACE_VARIABLE]: puntos
-        }
-      ],
+    const payload = [
       {
-        headers: {
-          Authorization: `Bearer ${process.env.GORACE_JWT}`,
-          'Content-Type': 'application/json'
-        }
+        assignment: process.env.GORACE_ASSIGNMENT,
+        email,
+        time: fechaFormateada,
+        [variable]: 1
       }
-    );
+    ];
+
+    const response = await axios.post(process.env.GORACE_API_URL, payload, {
+      headers: {
+        Authorization: `Bearer ${process.env.GORACE_JWT}`,
+        'Content-Type': 'application/json'
+      }
+    });
 
     console.log('✅ Resultado enviado a GoRace:', response.data);
   } catch (error) {
-    console.error('❌ Error al enviar puntos a GoRace:', error.response?.data || error.message);
+    console.error('❌ Error al enviar a GoRace:', error.response?.data || error.message);
   }
 }
 
 
+
 app.post('/webhook', async (req, res) => {
-  console.log('📩 Webhook recibido:');
+  console.log('📩 Webhook recibido');
   const payload = req.body;
   const issue = payload.issue;
   const changelog = payload.changelog;
-  //console.log('🔍 Changelog recibido:', JSON.stringify(changelog, null, 2));
   const webhookEvent = payload.webhookEvent;
 
   const email = "albertops4conil@gmail.com";
 
-  // 🗒️ Comentarios añadidos
+  if (!issue || !issue.fields || !email) {
+    console.log('⚠️ Webhook incompleto o falta email');
+    return res.status(400).send('Formato inválido');
+  }
+
+  const dificultad = issue.fields?.customfield_10060 ?? '?';
+  console.log(`🎯 Nivel de dificultad de la tarea: ${dificultad}`);
+
+  // 🗒️ Comentario creado
   if (webhookEvent === 'comment_created') {
-    console.log(`💬 Comentario añadido: +1 punto`);
-    await enviarPuntosAGoRace(email, 1);
+    console.log('💬 Comentario añadido');
+    await enviarEventoAGoRace(email, 'COMMENT');
     return res.status(200).send('OK');
   }
 
-  // 🔄 Cambios en el issue
+  // 🔄 Actualización del issue
   if (webhookEvent === 'jira:issue_updated' && changelog) {
     const cambios = changelog.items || [];
     const cambioEstado = cambios.find(c => c.field === 'status');
@@ -88,75 +107,53 @@ app.post('/webhook', async (req, res) => {
     const cambioAttachment = cambios.find(c => c.field === 'Attachment');
 
     if (cambioAttachment) {
-      console.log(`📎 Archivo adjuntado: +1 punto`);
-      await enviarPuntosAGoRace(email, 1);
-      return res.status(200).send('OK');
+      console.log('📎 Archivo adjunto añadido');
+      await enviarEventoAGoRace(email, 'FILE');
     }
 
-    if (!issue || !issue.fields || !email) {
-      console.log('⚠️ Webhook incompleto o falta email');
-      return res.status(400).send('Formato inválido');
-    }
-
-    const puntosBase = issue.fields.customfield_10038 ?? 1;
-    const duedateStr = issue.fields.duedate;
-
-    // ✔️ Cambio a Done
     if (cambioEstado) {
       const from = cambioEstado.fromString?.toLowerCase();
       const to = cambioEstado.toString?.toLowerCase();
 
-      if ((from === 'in progress' || from === 'to do') && to === 'done') {
-        let puntosFinales = puntosBase;
-        if (duedateStr) {
-          const now = new Date();
-          const due = new Date(duedateStr);
-          const diffDays = Math.floor((now - due) / (1000 * 60 * 60 * 24));
-          if (diffDays > 0) {
-            puntosFinales = Math.max(0, puntosFinales - diffDays);
-            console.log(`⏰ Entregado tarde (${diffDays} días). Puntos ajustados.`);
-          } else {
-            console.log('✅ Entregado en plazo.');
-          }
-        }
-        console.log(`📧 Email: ${email} | 🏁 Puntos a enviar: ${puntosFinales}`);
-        await enviarPuntosAGoRace(email, puntosFinales);
+      if ((from === 'to do' || from === 'selected for development') && to === 'in progress') {
+        console.log('🚀 Tarea iniciada');
+        await enviarEventoAGoRace(email, 'TINIT');
       }
 
-      if (to === 'in progress') {
-        console.log(`🚀 Estado cambiado a In Progress: +2 puntos`);
-        await enviarPuntosAGoRace(email, 2);
+      if ((from === 'to do' || from === 'in progress') && to === 'done') {
+        console.log('🏁 Tarea finalizada');
+        await enviarEventoAGoRace(email, 'TFIN');
       }
     }
 
     if (cambioAssignee) {
-      console.log(`👤 Asignación cambiada: +2 puntos`);
-      await enviarPuntosAGoRace(email, 2);
+      console.log('👤 Cambio de asignación');
+      await enviarEventoAGoRace(email, 'TASIG');
     }
 
     if (cambioLabels) {
-      console.log(`🏷️ Etiquetas modificadas: +1 punto`);
-      await enviarPuntosAGoRace(email, 1);
+      console.log('🏷️ Etiquetas modificadas');
+      await enviarEventoAGoRace(email, 'LABEL');
     }
 
     if (cambioDesc) {
-      console.log(`📝 Descripción actualizada: +1 punto`);
-      await enviarPuntosAGoRace(email, 1);
+      console.log('📝 Descripción actualizada');
+      await enviarEventoAGoRace(email, 'DESCRIP');
     }
   }
 
   // 🆕 Creación de issue
   if (webhookEvent === 'jira:issue_created') {
-    console.log(`🆕 Issue creado: +1 punto`);
-    await enviarPuntosAGoRace(email, 1);
+    console.log('🆕 Issue creado');
+
+    if (issue.fields?.assignee) {
+      console.log('👤 Issue creado con responsable asignado');
+      await enviarEventoAGoRace(email, 'TASIG');
+    }
   }
 
   res.status(200).send('OK');
 });
-
-
-
-
 
 // Iniciar servidor
 const PORT = 3000;
