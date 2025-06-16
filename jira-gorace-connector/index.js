@@ -4,6 +4,13 @@ const app = express();
 
 require('dotenv').config();
 
+// Mapeo manual de accountId de Jira a emails reales
+const userMap = {
+  '712020:c82bcfe4-c6d9-429b-b939-c004df25ff84': 'albertops4conil@gmail.com',
+  // Puedes añadir más mapeos aquí si hay más usuarios
+};
+
+
 app.use(express.json());
 
 
@@ -24,37 +31,19 @@ function getFormattedUTCDate() {
   return `${year}-${month}-${day}T${hours}:${minutes}:${seconds}+00:00`;
 }
 
-// Función para obtener el email del usuario usando su accountId
-async function getEmailFromAccountId(accountId) {
-  try {
-    const response = await axios.get(`${process.env.JIRA_DOMAIN}/rest/api/3/user`, {
-      params: { accountId },
-      auth: {
-        username: process.env.JIRA_EMAIL,
-        password: process.env.JIRA_API_TOKEN
-      }
-    });
-
-    return response.data.emailAddress;
-  } catch (error) {
-    console.error('❌ Error al obtener el email de Jira:', error.response?.data || error.message);
-    return null;
-  }
-}
-
 // Función genérica para enviar un valor 1 a una variable específica en GoRace
-async function enviarEventoAGoRace(email, variable) {
+async function enviarEventoAGoRace(email, variable, valor = 1) {
   try {
     const fechaFormateada = getFormattedUTCDate();
 
-    console.log(`📤 Enviando evento "${variable}" con valor 1 para ${email} en ${fechaFormateada}`);
+    console.log(`📤 Enviando evento "${variable}" con valor ${valor} para ${email} en ${fechaFormateada}`);
 
     const payload = [
       {
         assignment: process.env.GORACE_ASSIGNMENT,
         email,
         time: fechaFormateada,
-        [variable]: 1
+        [variable]: valor
       }
     ];
 
@@ -73,6 +62,7 @@ async function enviarEventoAGoRace(email, variable) {
 
 
 
+
 app.post('/webhook', async (req, res) => {
   console.log('📩 Webhook recibido');
   const payload = req.body;
@@ -80,7 +70,17 @@ app.post('/webhook', async (req, res) => {
   const changelog = payload.changelog;
   const webhookEvent = payload.webhookEvent;
 
-  const email = "albertops4conil@gmail.com";
+  const accountId = payload.user?.accountId;
+  const email = userMap[accountId];
+
+  if (!email) {
+    console.log('⚠️ No se pudo mapear el email del usuario con accountId:', accountId);
+    return res.status(400).send('Email no encontrado');
+  } else {
+    console.log(`📧 Email del usuario: ${email}`);
+  }
+
+
 
   if (!issue || !issue.fields || !email) {
     console.log('⚠️ Webhook incompleto o falta email');
@@ -122,8 +122,11 @@ app.post('/webhook', async (req, res) => {
 
       if ((from === 'to do' || from === 'in progress') && to === 'done') {
         console.log('🏁 Tarea finalizada');
-        await enviarEventoAGoRace(email, 'TFIN');
+        const dificultad = issue.fields?.customfield_10060;
+        const valorDificultad = typeof dificultad === 'number' ? dificultad : 1; // valor por defecto si no se encuentra
+        await enviarEventoAGoRace(email, 'TFIN', valorDificultad);
       }
+
     }
 
     if (cambioAssignee) {

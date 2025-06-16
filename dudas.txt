@@ -1,0 +1,8 @@
+en gorace se usa la formula para a partir de los numeros almacenados en cada variable
+para calcular la distancia divina y eso.
+EN ese caso
+- ¿Nivel de dificultad deberá ser de tipo REPLACE para que
+cada vez que se complete se calcule el nivel de dificultad de esa tarea
+en especifico no?
+- Para el API de gorace no es necesario enviar cada variable en la 
+consulta, solo las implicadas. Es decir, una por evento.
