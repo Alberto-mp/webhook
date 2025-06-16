@@ -1,8 +1,20 @@
 en gorace se usa la formula para a partir de los numeros almacenados en cada variable
 para calcular la distancia divina y eso.
+
 EN ese caso
 - ¿Nivel de dificultad deberá ser de tipo REPLACE para que
 cada vez que se complete se calcule el nivel de dificultad de esa tarea
 en especifico no?
+
+
 - Para el API de gorace no es necesario enviar cada variable en la 
 consulta, solo las implicadas. Es decir, una por evento.
+
+emails mapeo manual porque Jira por seguridad no envia el correo y
+es obligatorio para gorace
+
+en conclusion decir que jira y gorace no son muy buenas para 
+conectar
+
+cada vez que se arranca el servidor, hay que añadir la IP en 
+gorace as admin y poner la nueva URL que nos da ngrok.
